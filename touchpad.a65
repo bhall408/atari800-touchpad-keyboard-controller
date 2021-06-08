@@ -1,0 +1,181 @@
+;----------------------------------------
+;
+; TOUCHPAD.MAC
+; By Brian Hall 10/23/84
+;
+; A subroutine to return in A the
+; alpha equivalent of a key touched on
+; an Atari 12 Key 'Video Touch Pad' (CX21)
+; plugged into controller jack 2.
+;
+; Will return (Keytab,0) if there is
+; no controller connected or if no key
+; has been pressed.
+;
+; The routine is completely relocatable
+; and currently is ORG'ed to sit on
+; page 6 for making BASIC happy, or
+; no_wheres_ville for use as a ML subr.
+;
+; I have made exclusive use of PORTA
+; to avoid OS vXL conflicts. Use PORTB
+; at your own risk!
+;
+; GLOBAL LABELS:
+; Keytab 
+;	A 13 byte table containing the ATASCII
+;	equivalents for the keys.
+; I_Rd_Pad
+;	Initialize jack 2 for output and
+;	otherwise prepare for the pad.
+; Rd_Pad 
+;	Entry point for ML use. Returns
+;	value in A as detailed above.
+;
+; Update history: 
+;	12/08/84 - Modified for greater XL series compat.
+;
+;	2021-06-08	bhall
+;		Updated for ca65
+;----------------------------------------
+
+;----------------------------------------
+; System Equates
+;----------------------------------------
+	.LIST -
+		.INCLUDE "atari.inc"
+		.MACPACK atari
+	.LIST +
+
+;----------------------------------------
+; Project specific includes
+;----------------------------------------
+
+	.INCLUDE "../common/macros.a65"
+
+;----------------------------------------
+; Project specific constants
+;----------------------------------------
+
+; 0=Callable from assembler
+; 1=Callable from BASIC, X=USR(1536)
+USEBASIC	= 1
+
+Start: 
+	.IF USEBASIC
+	.ORG $600
+	pla			; make basic happy
+	cld
+	.ENDIF
+
+; Set for output
+I_Rd_Pad: 
+	lda InitFlag
+	bne Rd_Pad
+
+	Movei PACTL,$38		; set DCR
+	Movei PORTA,$f0		; jack 2 output
+	Movei PACTL,$30		; set as PORT A
+	sta InitFlag
+
+;----------
+; Main Loop 
+;----------
+.PROC Rd_Pad
+; Is the controller hooked up? 
+	lda PADDL2
+	cmp #228
+	bne Loop-2
+	lda PADDL3
+	cmp #228
+	beq out-2 
+	ldx #0
+
+Loop:
+; Select row 
+	lda Rowmsk,x 
+	sta PORTA
+
+; Wait 2 jiffies for POT scan values to be ready - incorrect result if you don't
+	lda RTCLOK+2
+wait1:
+	cmp RTCLOK+2 
+	beq wait1
+
+	lda RTCLOK+2
+wait2:
+	cmp RTCLOK+2
+	beq wait2
+
+; Read column 1 
+	lda PADDL3
+	cmp #10
+	bcc l1
+	lda #1
+	clc
+	adc Basadd,x
+	bcc out
+
+; Read column 2
+l1:
+	lda PADDL2
+	cmp #10
+	bcc l2 
+	lda #2
+	clc
+	adc Basadd,x
+	bcc out
+	
+; Read column 3
+l2:
+	lda STRIG1
+	bne next
+	lda #3
+	clc
+	adc Basadd, x
+	bcc out
+
+next:
+	inx
+	cpx #4
+	bne Loop
+	lda #0
+out:
+	tax
+
+.ENDPROC 
+
+	
+; Get the character we wish to return
+	lda Keytab, x
+
+; For BASIC, we store that in the BASIC return value
+	.IF USEBASIC
+		sta $d4
+		Stz $d5
+	.ENDIF
+
+	rts
+
+
+; Data Tables
+; ---- ------
+
+; Table of row masks
+Rowmsk:
+	.BYTE $ee, $dd, $bb, $77 
+
+; Number to add based on row
+Basadd:
+	.BYTE 0,3,6,9
+
+; Non-Zero if we have already done initialization
+InitFlag:
+	.BYTE 0 
+
+; Alpha Equivalent for Touchpad keys 
+; Currently set up like a phone
+Keytab:
+	.BYTE 0, "123456789*0#"
+
+.END

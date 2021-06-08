@@ -1,0 +1,224 @@
+;----------------------------------------
+; K: Handler for 12 key
+; Atari Video Touchpad
+; By Brian Hall 12/18/84 
+;
+;	2021-06-08	bhall
+;		Updated for ca65
+;----------------------------------------
+
+;----------------------------------------
+; System Equates
+;----------------------------------------
+	.LIST -
+		.INCLUDE "atari.inc"
+		.MACPACK atari
+	.LIST +
+
+;----------------------------------------
+; Project specific includes
+;----------------------------------------
+
+	.INCLUDE "../common/macros.a65"
+
+Devnam	= 'k'
+
+	.ORG $600
+	
+;----------------------------------------
+; Installation code
+;----------------------------------------
+
+; First, we must search through the
+; handler table to see if there is an
+; opening, or the device is already 
+; installed. An opening is marked with
+; a 0 byte
+.PROC Start
+	ldx #0
+look:
+	lda HATABS, x
+	beq Install	; found a spot! 
+	cmp #Devnam	; already in? 
+	beq out 	; yes!
+	inx
+	inx
+	inx
+	bne look	; keep looking
+out:			; end of table?!? 
+	rts
+.ENDPROC
+
+
+Install: 
+; We put the ASCII for the device name 
+; in the table followed by the address
+; of its handler vector table. 
+	lda #Devnam
+	sta HATABS, X
+	lda #.LOBYTE(Hndvec)
+	sta HATABS+1, X
+	lda #.HIBYTE(Hndvec)
+	sta HATABS+2, X
+; Put a zero in to insure room for more handlers.
+	lda #0
+	sta HATABS+3,X
+	rts 
+
+
+;----------------------------------------
+; Handler Vector Table
+;----------------------------------------
+Hndvec:
+	.WORD OpenV-1
+	.WORD CloseV-1
+	.WORD GetV-1
+	.WORD Putv-1
+	.WORD StatusV-1
+	.WORD SpecialV-1
+	jmp Ret			; Init vector 
+
+;----------------------------------------
+; Actual Routines
+;----------------------------------------
+
+OpenV:
+ok:
+	jsr IsThere
+	beq yep
+	rts
+yep:
+	Movei PACTL,$30
+	Movei PORTA,$40
+	Movei PACTL,$34 
+	ldy #1 
+	rts
+
+CloseV: 
+	Movei PACTL,$30
+	Movei PORTA,0
+	Movei PACTL, $34 
+	ldy #1 
+	rts
+
+GetV:
+; Is the controller hooked up? 
+	jsr IsThere
+	beq BrkCheck
+	rts
+
+; Is break pressed?
+BrkCheck:
+	lda BRKKEY
+	bne Nxt
+	Movei BRKKEY,1
+	ldy #$80
+	rts 
+
+Nxt:
+	Movei BRKKEY,1
+	ldx #0
+
+.PROC Loop
+; Select row 
+	lda Rowmsk,x 
+	sta PORTA
+
+; Wait for some inane reason - incorrect values if you don't 
+	lda RTCLOK+2
+wait1:
+	cmp RTCLOK+2 
+	beq wait1 
+
+	lda RTCLOK+2
+wait2:
+	cmp RTCLOK+2 
+	beq wait2
+
+; Read column 1 
+	lda PADDL3
+	cmp #10
+	bcc l1
+	lda #1
+	clc
+	adc Basadd, x 
+	bcc out
+
+; Read column 2
+l1:
+	lda PADDL2
+	cmp #10
+	bcc l2
+	lda #2
+	clc
+	adc Basadd, x 
+	bcc out
+
+; Read column 3 
+l2:
+	lda STRIG1
+	bne next
+	lda #3
+	clc
+	adc Basadd,x
+	bcc out 
+
+next:
+	inx
+	cpx #4
+	bne Loop
+
+; We must have a value to return, so loop back. 
+	jmp GetV
+
+; Found a value, so return it in A 
+out:
+	tax
+	lda Keytab,x
+	ldy #1
+	rts 
+.ENDPROC
+
+StatusV:
+	jsr IsThere
+	bne Ret 
+	ldy #1
+	rts
+
+; Null routine for unused cmds
+Putv:
+SpecialV:
+Ret:
+	rts
+
+IsThere: 
+	lda PADDL2
+	and PADDL3 
+	cmp #228
+	beq No
+	ldy #0
+	rts
+No:
+	ldy #138	; ?device timeout
+	rts
+
+
+; Data Tables
+; ---- ------
+
+; Table of row masks
+Rowmsk:
+	.BYTE $ee, $dd, $bb, $77 
+
+; Number to add based on row
+Basadd:
+	.BYTE 0,3,6,9
+
+; Alpha Equivalents for Touchpad keys
+; Assignable to any ATASCII chars
+; Currently set up like a phone
+Keytab:
+	.BYTE 0, "123456789*0#"
+
+.END Start 
+
